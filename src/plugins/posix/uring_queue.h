@@ -1,0 +1,42 @@
+#ifndef URING_QUEUE_H
+#define URING_QUEUE_H
+
+#include <liburing.h>
+#include "async_queue.h"
+#include "common/status.h"
+
+// Forward declare Error class
+class nixlPosixBackendReqH;
+
+class UringQueue : public nixlPosixQueue {
+private:
+    struct io_uring uring;    // The io_uring instance for async I/O operations
+    int num_entries;          // Total number of entries expected in this ring
+    int num_completed;        // Number of completed operations so far
+    int num_submitted;        // Number of submitted operations
+    bool is_read;            // Whether this is a read operation
+    bool use_fixed_files;    // Whether using registered file descriptors
+    bool use_fixed_buffers;  // Whether using registered buffers
+
+    // Initialize the queue with the given parameters
+    nixl_status_t init(int num_entries, const struct io_uring_params& params, bool is_read);
+
+    // Delete copy and move operations to prevent accidental copying of kernel resources
+    UringQueue(const UringQueue&) = delete;
+    UringQueue& operator=(const UringQueue&) = delete;
+    UringQueue(UringQueue&&) = delete;
+    UringQueue& operator=(UringQueue&&) = delete;
+
+public:
+    UringQueue(int num_entries, const struct io_uring_params& params, bool is_read);
+    ~UringQueue();
+    nixl_status_t submit() override;
+    nixl_status_t checkCompleted() override;
+    nixl_status_t prepareIO(int fd, void* buf, size_t len, off_t offset) override;
+
+    // Getter methods for progress tracking
+    int getNumCompleted() const { return num_completed; }
+    int getNumEntries() const { return num_entries; }
+};
+
+#endif // URING_QUEUE_H
