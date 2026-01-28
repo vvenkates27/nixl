@@ -50,6 +50,11 @@ class nixlGdsIOBatch {
         nixl_status_t cancelBatch();
         void reset();
 
+        // Public accessors for batch status information
+        CUfileIOEvents_t* getIOBatchEvents() const { return io_batch_events; }
+        unsigned int getBatchSize() const { return batch_size; }
+        unsigned int getEntriesCompleted() const { return entries_completed; }
+
     private:
         CUfileBatchHandle_t batch_handle;
         CUfileIOEvents_t *io_batch_events = nullptr;

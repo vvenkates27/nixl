@@ -401,6 +401,71 @@ nixl_status_t nixlGdsEngine::checkXfer(nixlBackendReqH* handle) const
     return status;
 }
 
+nixl_status_t nixlGdsEngine::checkXferList(nixlBackendReqH* handle,
+                                            std::vector<nixl_status_t> &entry_status) const
+{
+    nixlGdsBackendReqH *gds_handle = (nixlGdsBackendReqH *)handle;
+    entry_status.clear();
+
+    if (gds_handle->batch_io_list.empty()) {
+        gds_handle->needs_prep = true;
+        return NIXL_SUCCESS;
+    }
+
+    nixl_status_t overall_status = NIXL_SUCCESS;
+
+    // Iterate through all batches
+    for (auto* batch : gds_handle->batch_io_list) {
+        nixl_status_t batch_status = batch->checkStatus();
+
+        // Get per-entry status from io_batch_events
+        unsigned int batch_entries = batch->getBatchSize();
+        CUfileIOEvents_t* events = batch->getIOBatchEvents();
+        unsigned int completed = batch->getEntriesCompleted();
+
+        for (unsigned int i = 0; i < batch_entries; i++) {
+            CUfileIOEvents_t* event = &events[i];
+
+            nixl_status_t entry_stat;
+            if (event->ret < 0) {
+                // Error occurred for this entry
+                entry_stat = NIXL_ERR_BACKEND;
+            } else if (i < completed) {
+                entry_stat = NIXL_SUCCESS;
+            } else {
+                entry_stat = NIXL_IN_PROG;
+            }
+
+            entry_status.push_back(entry_stat);
+
+            // Track worst status for overall
+            if (entry_stat < 0 && overall_status >= 0) {
+                overall_status = entry_stat;
+            } else if (entry_stat == NIXL_IN_PROG && overall_status == NIXL_SUCCESS) {
+                overall_status = NIXL_IN_PROG;
+            }
+        }
+
+        if (batch_status < 0) {
+            batch->cancelBatch();
+        }
+
+        if (batch_status != NIXL_IN_PROG) {
+            returnBatchToPool(batch);
+        } else {
+            // Still in progress, return early
+            return NIXL_IN_PROG;
+        }
+    }
+
+    if (overall_status != NIXL_IN_PROG) {
+        gds_handle->batch_io_list.clear();
+        gds_handle->needs_prep = true;
+    }
+
+    return overall_status;
+}
+
 nixl_status_t nixlGdsEngine::releaseReqH(nixlBackendReqH* handle) const
 {
 

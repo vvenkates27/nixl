@@ -167,6 +167,8 @@ class nixlGdsEngine : public nixlBackendEngine {
                               const nixl_opt_b_args_t* opt_args=nullptr) const;
 
         nixl_status_t checkXfer(nixlBackendReqH* handle) const;
+        nixl_status_t checkXferList(nixlBackendReqH* handle,
+                                    std::vector<nixl_status_t> &entry_status) const override;
         nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
 
         nixl_status_t

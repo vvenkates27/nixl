@@ -21,3 +21,8 @@ nixl_gds_app = executable('nixl_gds_test', 'nixl_gds_test.cpp',
                           dependencies: [nixl_dep, nixl_infra, cuda_dep],
                           include_directories: [nixl_inc_dirs, utils_inc_dirs],
                           install: true)
+
+nixl_gds_checkxferlist_test = executable('test_checkXferList', 'test_checkXferList.cpp',
+                                         dependencies: [nixl_dep, nixl_infra, cuda_dep],
+                                         include_directories: [nixl_inc_dirs, utils_inc_dirs],
+                                         install: true)
