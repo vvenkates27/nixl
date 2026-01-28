@@ -31,6 +31,11 @@ public:
     virtual nixl_status_t
     checkCompleted() = 0;
     virtual nixl_status_t
+    checkCompletedList(std::vector<nixl_status_t> &entry_status) {
+        // Default implementation: not supported
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+    virtual nixl_status_t
     prepIO(int fd, void *buf, size_t len, off_t offset) = 0;
 
     enum class queue_t {

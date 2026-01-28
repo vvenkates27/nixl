@@ -25,4 +25,13 @@ if has_posix_plugin
 
     # Register the test with the test suite
     test('posix_plugin_test', nixl_posix_app)
+
+    # checkXferList test
+    nixl_checkXferList_test = executable('test_checkXferList', 'test_checkXferList.cpp',
+                                         dependencies: [nixl_dep, nixl_infra, absl_log_dep],
+                                         include_directories: [nixl_inc_dirs, utils_inc_dirs],
+                                         install: true)
+
+    # Register the checkXferList test
+    test('posix_checkXferList_test', nixl_checkXferList_test)
 endif

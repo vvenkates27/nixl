@@ -238,6 +238,11 @@ nixlPosixBackendReqH::checkXfer() {
 }
 
 nixl_status_t
+nixlPosixBackendReqH::checkXferList(std::vector<nixl_status_t> &entry_status) {
+    return queue->checkCompletedList(entry_status);
+}
+
+nixl_status_t
 nixlPosixBackendReqH::postXfer() {
     return queue->submit(local, remote);
 }
@@ -352,6 +357,20 @@ nixlPosixEngine::checkXfer(nixlBackendReqH *handle) const {
     try {
         auto &posix_handle = castPosixHandle(handle);
         return posix_handle.checkXfer();
+    }
+    catch (const nixlPosixBackendReqH::exception &e) {
+        NIXL_ERROR << e.what();
+        return e.code();
+    }
+    return NIXL_ERR_BACKEND;
+}
+
+nixl_status_t
+nixlPosixEngine::checkXferList(nixlBackendReqH *handle,
+                                std::vector<nixl_status_t> &entry_status) const {
+    try {
+        auto &posix_handle = castPosixHandle(handle);
+        return posix_handle.checkXferList(entry_status);
     }
     catch (const nixlPosixBackendReqH::exception &e) {
         NIXL_ERROR << e.what();

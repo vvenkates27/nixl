@@ -53,6 +53,8 @@ public:
     prepXfer();
     nixl_status_t
     checkXfer();
+    nixl_status_t
+    checkXferList(std::vector<nixl_status_t> &entry_status);
 
     // Exception classes
     class exception : public std::exception {
@@ -136,6 +138,9 @@ public:
 
     nixl_status_t
     checkXfer(nixlBackendReqH *handle) const override;
+    nixl_status_t
+    checkXferList(nixlBackendReqH *handle,
+                  std::vector<nixl_status_t> &entry_status) const override;
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
