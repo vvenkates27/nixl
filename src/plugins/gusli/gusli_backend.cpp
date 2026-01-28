@@ -192,6 +192,8 @@ public:
     exec(void) = 0;
     [[nodiscard]] virtual nixl_status_t
     pollStatus(void) = 0;
+    [[nodiscard]] virtual nixl_status_t
+    pollStatusList(std::vector<nixl_status_t> &entry_status) = 0;
 
     nixlGusliBackendReqHbase(const nixl_xfer_op_t _op)
         : op((_op == NIXL_WRITE) ? gusli::G_WRITE : gusli::G_READ) {
@@ -305,6 +307,14 @@ public:
         return getCompStatus();
     }
 
+    [[nodiscard]] nixl_status_t
+    pollStatusList(std::vector<nixl_status_t> &entry_status) override {
+        entry_status.clear();
+        nixl_status_t status = pollStatus();
+        entry_status.push_back(status);
+        return status;
+    }
+
 private:
     gusli::io_request io; // gusli executor of 1 io
 
@@ -363,6 +373,47 @@ public:
         __LOG_IO(this, "_done_all_sub, success");
         pollableAsyncRV = gusli::io_error_codes::E_OK;
         return getCompStatus();
+    }
+
+    [[nodiscard]] nixl_status_t
+    pollStatusList(std::vector<nixl_status_t> &entry_status) override {
+        entry_status.clear();
+        nixl_status_t overall_status = NIXL_SUCCESS;
+
+        // Check if the compound op has a cached overall error
+        if (pollableAsyncRV != gusli::io_error_codes::E_IN_TRANSFER) {
+            overall_status = getCompStatus();
+        }
+
+        // Collect status from each child
+        for (auto &sub : child) {
+            nixl_status_t sub_status = sub.pollStatus();
+            entry_status.push_back(sub_status);
+
+            // Track worst status for overall
+            if (sub_status < 0 && overall_status >= 0) {
+                overall_status = sub_status;
+            } else if (sub_status == NIXL_IN_PROG && overall_status == NIXL_SUCCESS) {
+                overall_status = NIXL_IN_PROG;
+            }
+        }
+
+        // Update compound op status if all children are done
+        if (overall_status != NIXL_IN_PROG && pollableAsyncRV == gusli::io_error_codes::E_IN_TRANSFER) {
+            if (overall_status == NIXL_SUCCESS) {
+                pollableAsyncRV = gusli::io_error_codes::E_OK;
+            } else {
+                // Find first child with error and propagate
+                for (auto &sub : child) {
+                    if (sub.pollStatus() != NIXL_SUCCESS) {
+                        pollableAsyncRV = sub.pollableAsyncRV;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return overall_status;
     }
 
 private:
@@ -438,6 +489,13 @@ nixl_status_t
 nixlGusliEngine::checkXfer(nixlBackendReqH *handle) const {
     nixlGusliBackendReqHbase *req = (nixlGusliBackendReqHbase *)handle;
     return req->pollStatus();
+}
+
+nixl_status_t
+nixlGusliEngine::checkXferList(nixlBackendReqH *handle,
+                                std::vector<nixl_status_t> &entry_status) const {
+    nixlGusliBackendReqHbase *req = (nixlGusliBackendReqHbase *)handle;
+    return req->pollStatusList(entry_status);
 }
 
 nixl_status_t

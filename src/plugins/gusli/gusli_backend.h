@@ -91,6 +91,9 @@ public:
     [[nodiscard]] nixl_status_t
     checkXfer(nixlBackendReqH *io_handle) const override;
     [[nodiscard]] nixl_status_t
+    checkXferList(nixlBackendReqH *io_handle,
+                  std::vector<nixl_status_t> &entry_status) const override;
+    [[nodiscard]] nixl_status_t
     releaseReqH(nixlBackendReqH *io_handle) const override;
 
 private:
