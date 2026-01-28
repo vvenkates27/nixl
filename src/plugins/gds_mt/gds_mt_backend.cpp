@@ -101,6 +101,7 @@ public:
     tf::Taskflow taskflow;
     std::future<void> running_transfer;
     std::atomic<nixl_status_t> overall_status;
+    std::vector<std::atomic<nixl_status_t>> entry_status_list;
 };
 
 size_t
@@ -126,13 +127,16 @@ getThreadCount (const nixlBackendInitParams *init_params) {
 }
 
 void
-runCuFileOp (GdsMtTransferRequestH *req, std::atomic<nixl_status_t> *overall_status) {
+runCuFileOp (GdsMtTransferRequestH *req,
+             std::atomic<nixl_status_t> *overall_status,
+             std::atomic<nixl_status_t> *entry_status) {
     ssize_t nbytes = 0;
     if (req->op == CUFILE_READ) {
         nbytes = cuFileRead (req->fh, req->addr, req->size, req->file_offset, 0);
         if (nbytes < 0) {
             NIXL_ERROR << "GDS_MT: cuFileRead failed: " << strerror (errno);
             overall_status->store (NIXL_ERR_BACKEND);
+            entry_status->store (NIXL_ERR_BACKEND);
             return;
         }
     } else if (req->op == CUFILE_WRITE) {
@@ -140,10 +144,12 @@ runCuFileOp (GdsMtTransferRequestH *req, std::atomic<nixl_status_t> *overall_sta
         if (nbytes < 0) {
             NIXL_ERROR << "GDS_MT: cuFileWrite failed: " << strerror (errno);
             overall_status->store (NIXL_ERR_BACKEND);
+            entry_status->store (NIXL_ERR_BACKEND);
             return;
         }
     } else {
         overall_status->store (NIXL_ERR_INVALID_PARAM);
+        entry_status->store (NIXL_ERR_INVALID_PARAM);
         return;
     }
 
@@ -151,8 +157,12 @@ runCuFileOp (GdsMtTransferRequestH *req, std::atomic<nixl_status_t> *overall_sta
         NIXL_ERROR << "GDS_MT: error: short " << ((req->op == CUFILE_READ) ? "read: " : "write: ")
                    << nbytes << " out of " << req->size << " bytes - address=" << req->addr;
         overall_status->store (NIXL_ERR_BACKEND);
+        entry_status->store (NIXL_ERR_BACKEND);
         return;
     }
+
+    // Mark this entry as successful
+    entry_status->store (NIXL_SUCCESS);
 }
 
 nixl_status_t
@@ -334,12 +344,23 @@ nixlGdsMtEngine::prepXfer (const nixl_xfer_op_t &operation,
     if (gds_mt_handle->request_list.empty()) {
         return NIXL_ERR_INVALID_PARAM;
     }
+
+    // Initialize per-entry status list
+    gds_mt_handle->entry_status_list.resize(gds_mt_handle->request_list.size());
+    for (size_t i = 0; i < gds_mt_handle->entry_status_list.size(); ++i) {
+        gds_mt_handle->entry_status_list[i].store(NIXL_IN_PROG);
+    }
+
+    // Create taskflow with per-entry status tracking
+    size_t idx = 0;
     for (GdsMtTransferRequestH &req : gds_mt_handle->request_list) {
         GdsMtTransferRequestH *captured_req = &req;
+        std::atomic<nixl_status_t> *entry_status_ptr = &gds_mt_handle->entry_status_list[idx];
         gds_mt_handle->taskflow.emplace (
-            [captured_req, overall_status = &gds_mt_handle->overall_status]() {
-                runCuFileOp (captured_req, overall_status);
+            [captured_req, overall_status = &gds_mt_handle->overall_status, entry_status_ptr]() {
+                runCuFileOp (captured_req, overall_status, entry_status_ptr);
             });
+        ++idx;
     }
 
     handle = gds_mt_handle.release();
@@ -369,6 +390,46 @@ nixlGdsMtEngine::checkXfer (nixlBackendReqH *handle) const {
     }
     gds_mt_handle->running_transfer.get();
     return gds_mt_handle->overall_status.load();
+}
+
+nixl_status_t
+nixlGdsMtEngine::checkXferList (nixlBackendReqH *handle,
+                                std::vector<nixl_status_t> &entry_status) const {
+    nixlGdsMtBackendReqH *gds_mt_handle = (nixlGdsMtBackendReqH *)handle;
+    entry_status.clear();
+
+    // Check if transfer is still in progress
+    bool is_complete = (gds_mt_handle->running_transfer.wait_for (nixlTime::seconds (0)) ==
+                        std::future_status::ready);
+
+    // Collect per-entry status
+    nixl_status_t overall_status = NIXL_SUCCESS;
+    for (size_t i = 0; i < gds_mt_handle->entry_status_list.size(); ++i) {
+        nixl_status_t entry_stat = gds_mt_handle->entry_status_list[i].load();
+        entry_status.push_back(entry_stat);
+
+        // Track worst status for overall
+        if (entry_stat < 0 && overall_status >= 0) {
+            overall_status = entry_stat;
+        } else if (entry_stat == NIXL_IN_PROG && overall_status == NIXL_SUCCESS) {
+            overall_status = NIXL_IN_PROG;
+        }
+    }
+
+    // If transfer is complete, wait and get the final overall status
+    if (is_complete) {
+        gds_mt_handle->running_transfer.get();
+        nixl_status_t final_status = gds_mt_handle->overall_status.load();
+        // Use the final status if it's an error
+        if (final_status < 0) {
+            overall_status = final_status;
+        }
+    } else {
+        // Still in progress
+        overall_status = NIXL_IN_PROG;
+    }
+
+    return overall_status;
 }
 
 nixl_status_t
