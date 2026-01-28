@@ -448,18 +448,21 @@ void nixlHf3fsEngine::waitForIOsThread(void* handle, void *utils)
 
         if (num_completed > 0) {
             for (int i = 0; i < num_completed; i++) {
+                nixlHf3fsIO* io = (nixlHf3fsIO*)cqes[i].userdata;
+
                 if (cqes[i].result < 0) {
                     io_status->error_status = NIXL_ERR_BACKEND;
                     io_status->error_message = absl::StrFormat(
                         "Error: I/O operation completed with error: %d", cqes[i].result);
+                    io->status = NIXL_ERR_BACKEND;
                     break;
                 }
 
-                nixlHf3fsIO* io = (nixlHf3fsIO*)cqes[i].userdata;
                 if (io->is_read && io->mem_type == NIXL_HF3FS_MEM_TYPE_DRAM) {
                     memcpy(io->addr, io->iov.base, io->size);
                 }
 
+                io->status = NIXL_SUCCESS;
                 hf3fs_handle->completed_ios++;
             }
         }
@@ -500,6 +503,64 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
 
     cleanupIOThread(hf3fs_handle);
     return NIXL_SUCCESS;
+}
+
+nixl_status_t nixlHf3fsEngine::checkXferList(nixlBackendReqH* handle,
+                                              std::vector<nixl_status_t> &entry_status) const
+{
+    if (handle == nullptr) {
+        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM, "Error: handle is null in checkXferList");
+    }
+
+    nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
+    entry_status.clear();
+
+    // Check if IOR is initialized
+    if (&hf3fs_handle->ior == nullptr) {
+        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
+            "Error: IOR is not initialized in checkXferList");
+    }
+
+    if (hf3fs_handle->io_status.thread == nullptr) {
+        HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
+            "Error: io thread is not initialized in checkXferList");
+    }
+
+    // Check for thread errors
+    if (hf3fs_handle->io_status.error_status != NIXL_SUCCESS) {
+        nixl_status_t error_status = hf3fs_handle->io_status.error_status;
+        std::string error_message = hf3fs_handle->io_status.error_message;
+
+        // Collect status from all IOs (they may have partial completions)
+        for (const auto* io : hf3fs_handle->io_list) {
+            entry_status.push_back(io->status);
+        }
+
+        cleanupIOThread(hf3fs_handle);
+        HF3FS_LOG_RETURN(error_status, error_message);
+    }
+
+    // Collect per-IO status
+    nixl_status_t overall_status = NIXL_SUCCESS;
+    for (const auto* io : hf3fs_handle->io_list) {
+        nixl_status_t io_status = io->status;
+        entry_status.push_back(io_status);
+
+        // Track worst status for overall
+        if (io_status < 0 && overall_status >= 0) {
+            overall_status = io_status;
+        } else if (io_status == NIXL_IN_PROG && overall_status == NIXL_SUCCESS) {
+            overall_status = NIXL_IN_PROG;
+        }
+    }
+
+    // Check if all IOs are complete
+    if (hf3fs_handle->completed_ios < hf3fs_handle->num_ios) {
+        return NIXL_IN_PROG;
+    }
+
+    cleanupIOThread(hf3fs_handle);
+    return overall_status;
 }
 
 nixl_status_t nixlHf3fsEngine::releaseReqH(nixlBackendReqH* handle) const

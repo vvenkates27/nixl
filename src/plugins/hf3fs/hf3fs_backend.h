@@ -86,6 +86,7 @@ class nixlHf3fsIO {
         bool is_read = false; // Whether this is a read operation
         size_t offset;    // Offset in the file
         nixl_hf3fs_mem_type mem_type;
+        nixl_status_t status = NIXL_IN_PROG; // Per-IO status
 
         nixlHf3fsIO() = default;
 };
@@ -201,6 +202,8 @@ class nixlHf3fsEngine : public nixlBackendEngine {
                                 const nixl_opt_b_args_t* opt_args=nullptr) const;
 
         nixl_status_t checkXfer (nixlBackendReqH* handle) const;
+        nixl_status_t checkXferList (nixlBackendReqH* handle,
+                                     std::vector<nixl_status_t> &entry_status) const;
         nixl_status_t releaseReqH(nixlBackendReqH* handle) const;
 
         nixl_status_t
