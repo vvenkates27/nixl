@@ -19,7 +19,8 @@ unit_test_deps = [
 ]
 
 aws_s3 = dependency('aws-cpp-sdk-s3', static: false, required: false)
-if aws_s3.found()
+aws_core = dependency('aws-cpp-sdk-core', static: false, required: false)
+if aws_s3.found() and aws_core.found() and enabled_plugins.get('OBJ')
     subdir('obj')
     unit_test_deps += [obj_unit_test_dep]
 endif

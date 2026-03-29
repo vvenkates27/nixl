@@ -26,7 +26,7 @@ if has_posix_plugin
     # Register the default test (uses AIO backend)
     test('posix_plugin_test', nixl_posix_app)
 
-    # Register pwrite/pread taskflow test variant
-    test('posix_plugin_pwrite_test', nixl_posix_app,
+    # Register posix_sync taskflow test variant
+    test('posix_plugin_posix_sync_test', nixl_posix_app,
          args: ['-P', '-n', '32', '-s', '524288'])
 endif

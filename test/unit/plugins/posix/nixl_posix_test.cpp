@@ -57,6 +57,7 @@ namespace {
     int phase_num = 1;
 
     std::string center_str(const std::string& str) {
+        if (str.length() >= static_cast<size_t>(line_width)) return str;
         return std::string((line_width - str.length()) / 2, ' ') + str;
     }
 
@@ -227,7 +228,7 @@ read_write_test (int num_transfers,
         params["use_direct_io"] = "true";
     }
 
-    const char* backend_name = use_pwrite ? "pwrite/pread" : (use_uring ? "io_uring" : "AIO");
+    const char* backend_name = use_pwrite ? "posix_sync" : (use_uring ? "io_uring" : "AIO");
 
     // Print test configuration information
     print_segment_title ("NIXL STORAGE WRITE/READ TEST STARTING (POSIX PLUGIN)");
@@ -509,7 +510,7 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring,
         params["use_uring"] = "false";
     }
 
-    const char* backend_name = use_pwrite ? "pwrite/pread" : (use_uring ? "io_uring" : "AIO");
+    const char* backend_name = use_pwrite ? "posix_sync" : (use_uring ? "io_uring" : "AIO");
 
     print_segment_title (absl::StrFormat("NIXL STORAGE REPOST TEST STARTING (POSIX PLUGIN - %s)", backend_name));
 
@@ -795,7 +796,7 @@ main (int argc, char *argv[]) {
                       << std::endl;
             std::cout << absl::StrFormat ("  -D Use O_DIRECT for file I/O") << std::endl;
             std::cout << absl::StrFormat ("  -U Use io_uring backend instead of AIO") << std::endl;
-            std::cout << absl::StrFormat ("  -P Use pwrite/pread backend (taskflow thread pool)") << std::endl;
+            std::cout << absl::StrFormat ("  -P Use posix_sync backend (taskflow thread pool)") << std::endl;
             std::cout << absl::StrFormat ("  -h Show this help message") << std::endl;
             return (opt == 'h') ? 0 : 1;
         }
