@@ -19,6 +19,7 @@
 #define QUEUE_FACTORY_IMPL_H
 
 #include "posix_queue.h"
+#include "taskflow/core/executor.hpp"
 
 namespace QueueFactory {
 std::unique_ptr<nixlPosixQueue>
@@ -30,12 +31,19 @@ createUringQueue(int num_entries, nixl_xfer_op_t operation);
 std::unique_ptr<nixlPosixQueue>
 createLinuxAioQueue(int num_entries, nixl_xfer_op_t operation);
 
+// Create a queue that dispatches pwrite/pread calls via a taskflow thread pool.
+// executor must outlive the returned queue (typically owned by nixlPosixEngine).
+std::unique_ptr<nixlPosixQueue>
+createPwriteQueue(int num_entries, nixl_xfer_op_t operation, tf::Executor *executor);
+
 bool
 isPosixAioAvailable();
 bool
 isLinuxAioAvailable();
 bool
 isUringAvailable();
+bool
+isPwriteAvailable();
 }; // namespace QueueFactory
 
 #endif // QUEUE_FACTORY_IMPL_H

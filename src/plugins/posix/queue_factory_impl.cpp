@@ -19,6 +19,7 @@
 #include "queue_factory_impl.h"
 #include "posix_queue.h"
 #include "posix_backend.h"
+#include "posix_mt_queue.h"
 
 #ifdef HAVE_LIBAIO
 #include "aio_queue.h"
@@ -93,4 +94,16 @@ QueueFactory::isLinuxAioAvailable() {
 #else
     return false;
 #endif
+}
+
+std::unique_ptr<nixlPosixQueue>
+QueueFactory::createPwriteQueue(int num_entries, nixl_xfer_op_t operation,
+                                tf::Executor *executor) {
+    return std::make_unique<posixMtQueue>(num_entries, operation, executor);
+}
+
+bool
+QueueFactory::isPwriteAvailable() {
+    // pwrite/pread are standard POSIX syscalls always available on Linux.
+    return true;
 }

@@ -23,6 +23,10 @@ if has_posix_plugin
                                 include_directories: [nixl_inc_dirs, utils_inc_dirs],
                                 install: true)
 
-    # Register the test with the test suite
+    # Register the default test (uses AIO backend)
     test('posix_plugin_test', nixl_posix_app)
+
+    # Register pwrite/pread taskflow test variant
+    test('posix_plugin_pwrite_test', nixl_posix_app,
+         args: ['-P', '-n', '32', '-s', '524288'])
 endif

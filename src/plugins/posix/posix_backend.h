@@ -24,6 +24,7 @@
 #include <absl/strings/str_format.h>
 #include "backend/backend_engine.h"
 #include "posix_queue.h"
+#include "taskflow/core/executor.hpp"
 
 class nixlPosixBackendReqH : public nixlBackendReqH {
 private:
@@ -35,6 +36,7 @@ private:
     const int                       queue_depth_;    // Queue depth for async I/O
     std::unique_ptr<nixlPosixQueue> queue;           // Async I/O queue instance
     const nixlPosixQueue::queue_t   queue_type_;     // Type of queue used
+    tf::Executor                   *executor_;       // Non-owning; used only for PWRITE queue
 
     nixl_status_t initQueues();                      // Initialize async I/O queue
 
@@ -43,7 +45,8 @@ public:
                          const nixl_meta_dlist_t &local,
                          const nixl_meta_dlist_t &remote,
                          const nixl_opt_b_args_t* opt_args,
-                         const nixl_b_params_t* custom_params);
+                         const nixl_b_params_t* custom_params,
+                         tf::Executor* executor = nullptr);
     ~nixlPosixBackendReqH() {};
 
     nixl_status_t postXfer();
@@ -63,7 +66,9 @@ public:
 
 class nixlPosixEngine : public nixlBackendEngine {
 private:
-    const nixlPosixQueue::queue_t queue_type_;
+    const nixlPosixQueue::queue_t  queue_type_;
+    const size_t                   thread_count_;
+    std::unique_ptr<tf::Executor>  executor_; // Created only when PWRITE queue is selected
 
 public:
     nixlPosixEngine(const nixlBackendInitParams* init_params);

@@ -96,8 +96,11 @@ endif
 # Check for POSIX aio
 has_posix_aio = cpp.has_function('aio_cancel', prefix: '#include <aio.h>', dependencies: [rt_dep])
 
+# pwrite/pread are standard POSIX syscalls always available on Linux
+has_pwrite = true
+
 # Check whether the POSIX plugin is enabled
-has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio
+has_posix_plugin = has_linux_aio or has_io_uring or has_posix_aio or has_pwrite
 
 # Forced to ignore this error due to:
 # https://github.com/abseil/abseil-cpp/issues/1779

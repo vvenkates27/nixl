@@ -35,6 +35,7 @@ class nixlPosixQueue {
             AIO,
             URING,
             POSIXAIO,
+            PWRITE,       // pwrite/pread dispatched via taskflow thread pool
             UNSUPPORTED,
         };
 };

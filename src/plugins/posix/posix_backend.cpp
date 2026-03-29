@@ -28,6 +28,24 @@
 #include "file/file_utils.h"
 
 namespace {
+
+const size_t default_thread_count = 16;
+
+static size_t getThreadCount(const nixl_b_params_t *custom_params) {
+    size_t thread_count = default_thread_count;
+    if (custom_params && custom_params->count("thread_count") > 0) {
+        try {
+            size_t tcount = std::stoul(custom_params->at("thread_count"));
+            if (tcount != 0)
+                thread_count = tcount;
+        } catch (const std::exception &e) {
+            throw std::runtime_error("POSIX_MT: Invalid thread_count parameter: " +
+                                     std::string(e.what()));
+        }
+    }
+    return thread_count;
+}
+
     bool isValidPrepXferParams(const nixl_xfer_op_t &operation,
                                const nixl_meta_dlist_t &local,
                                const nixl_meta_dlist_t &remote,
@@ -71,8 +89,8 @@ namespace {
         switch (type) {
             case queue_t::AIO: return "AIO";
             case queue_t::URING: return "URING";
-            case queue_t::POSIXAIO:
-                return "POSIXAIO";
+            case queue_t::POSIXAIO: return "POSIXAIO";
+            case queue_t::PWRITE: return "PWRITE";
             case queue_t::UNSUPPORTED: return "UNSUPPORTED";
             default: return "UNKNOWN";
         }
@@ -107,7 +125,7 @@ namespace {
                 }
             }
 
-            // Then check if linux_aio is explicitly requested
+            // Then check if posix_aio is explicitly requested
             if (custom_params->count("use_posix_aio") > 0) {
                 const auto &value = custom_params->at("use_posix_aio");
                 if (value == "true" || value == "1") {
@@ -116,6 +134,14 @@ namespace {
                         return queue_t::UNSUPPORTED;
                     }
                     return queue_t::POSIXAIO;
+                }
+            }
+
+            // Check if pwrite/pread taskflow dispatch is explicitly requested
+            if (custom_params->count("use_pwrite") > 0) {
+                const auto &value = custom_params->at("use_pwrite");
+                if (value == "true" || value == "1") {
+                    return queue_t::PWRITE;
                 }
             }
         }
@@ -144,14 +170,16 @@ nixlPosixBackendReqH::nixlPosixBackendReqH(const nixl_xfer_op_t &op,
                                            const nixl_meta_dlist_t &loc,
                                            const nixl_meta_dlist_t &rem,
                                            const nixl_opt_b_args_t* args,
-                                           const nixl_b_params_t* params)
+                                           const nixl_b_params_t* params,
+                                           tf::Executor* executor)
     : operation(op)
     , local(loc)
     , remote(rem)
     , opt_args(args)
     , custom_params_(params)
     , queue_depth_(loc.descCount())
-    , queue_type_(getQueueType(params)) {
+    , queue_type_(getQueueType(params))
+    , executor_(executor) {
     if (queue_type_ == nixlPosixQueue::queue_t::UNSUPPORTED) {
         throw exception(absl::StrFormat("Unsupported queue type"), NIXL_ERR_NOT_SUPPORTED);
     }
@@ -181,6 +209,9 @@ nixl_status_t nixlPosixBackendReqH::initQueues() {
                 break;
             case nixlPosixQueue::queue_t::POSIXAIO:
                 queue = QueueFactory::createPosixAioQueue(queue_depth_, operation);
+                break;
+            case nixlPosixQueue::queue_t::PWRITE:
+                queue = QueueFactory::createPwriteQueue(queue_depth_, operation, executor_);
                 break;
             default:
                 NIXL_ERROR << absl::StrFormat("Invalid queue type: %s", to_string(queue_type_));
@@ -230,7 +261,8 @@ nixl_status_t nixlPosixBackendReqH::postXfer() {
 
 nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams* init_params)
     : nixlBackendEngine(init_params)
-    , queue_type_(getQueueType(init_params->customParams)) {
+    , queue_type_(getQueueType(init_params->customParams))
+    , thread_count_(getThreadCount(init_params->customParams)) {
     if (queue_type_ == nixlPosixQueue::queue_t::UNSUPPORTED) {
         initErr = true;
         NIXL_ERROR << absl::StrFormat(
@@ -238,6 +270,13 @@ nixlPosixEngine::nixlPosixEngine(const nixlBackendInitParams* init_params)
             to_string(queue_type_));
         return;
     }
+
+    // The taskflow executor is only needed for the PWRITE queue type.
+    if (queue_type_ == nixlPosixQueue::queue_t::PWRITE) {
+        executor_ = std::make_unique<tf::Executor>(thread_count_);
+        NIXL_DEBUG << "POSIX_MT: taskflow executor created with " << thread_count_ << " threads";
+    }
+
     NIXL_INFO << absl::StrFormat("POSIX backend initialized using queue type: %s",
                                  to_string(queue_type_));
 }
@@ -279,12 +318,16 @@ nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
             case nixlPosixQueue::queue_t::POSIXAIO:
                 params["use_posix_aio"] = "true";
                 break;
+            case nixlPosixQueue::queue_t::PWRITE:
+                params["use_pwrite"] = "true";
+                break;
             default:
                 NIXL_ERROR << absl::StrFormat("Invalid queue type: %s", to_string(queue_type_));
                 return NIXL_ERR_INVALID_PARAM;
         }
 
-        auto posix_handle = std::make_unique<nixlPosixBackendReqH>(operation, local, remote, opt_args, &params);
+        auto posix_handle = std::make_unique<nixlPosixBackendReqH>(
+            operation, local, remote, opt_args, &params, executor_.get());
         nixl_status_t status = posix_handle->prepXfer();
         if (status != NIXL_SUCCESS) {
             return status;
