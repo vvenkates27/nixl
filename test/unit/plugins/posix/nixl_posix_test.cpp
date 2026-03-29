@@ -199,7 +199,7 @@ read_write_test (int num_transfers,
                  std::string test_files_dir_path_abs_path,
                  bool use_direct_io,
                  bool use_uring,
-                 bool use_pwrite = false) {
+                 bool use_posix_sync = false) {
     // If using O_DIRECT, align transfer size to page size
     if (use_direct_io) {
         if (transfer_size % page_size != 0) {
@@ -212,8 +212,8 @@ read_write_test (int num_transfers,
 
     // Set up backend parameters
     nixl_b_params_t params;
-    if (use_pwrite) {
-        params["use_pwrite"] = "true";
+    if (use_posix_sync) {
+        params["use_posix_sync"] = "true";
     } else if (use_uring) {
         // Explicitly request io_uring
         params["use_uring"] = "true";
@@ -228,7 +228,7 @@ read_write_test (int num_transfers,
         params["use_direct_io"] = "true";
     }
 
-    const char* backend_name = use_pwrite ? "posix_sync" : (use_uring ? "io_uring" : "AIO");
+    const char* backend_name = use_posix_sync ? "posix_sync" : (use_uring ? "io_uring" : "AIO");
 
     // Print test configuration information
     print_segment_title ("NIXL STORAGE WRITE/READ TEST STARTING (POSIX PLUGIN)");
@@ -493,13 +493,13 @@ read_write_test (int num_transfers,
 
 int
 test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring,
-                   bool use_pwrite = false) {
+                   bool use_posix_sync = false) {
     constexpr int num_transfers = 16;
     constexpr size_t transfer_size = 128 * 1024; // 128KB
     // Set up backend parameters
     nixl_b_params_t params;
-    if (use_pwrite) {
-        params["use_pwrite"] = "true";
+    if (use_posix_sync) {
+        params["use_posix_sync"] = "true";
     } else if (use_uring) {
         // Explicitly request io_uring
         params["use_uring"] = "true";
@@ -510,7 +510,7 @@ test_posix_repost (std::string test_files_dir_path_abs_path, bool use_uring,
         params["use_uring"] = "false";
     }
 
-    const char* backend_name = use_pwrite ? "posix_sync" : (use_uring ? "io_uring" : "AIO");
+    const char* backend_name = use_posix_sync ? "posix_sync" : (use_uring ? "io_uring" : "AIO");
 
     print_segment_title (absl::StrFormat("NIXL STORAGE REPOST TEST STARTING (POSIX PLUGIN - %s)", backend_name));
 
@@ -753,7 +753,7 @@ main (int argc, char *argv[]) {
     std::string test_files_dir_path = default_test_files_dir_path;
     bool use_direct_io = false;
     bool use_uring = false;
-    bool use_pwrite = false;
+    bool use_posix_sync = false;
 
     while ((opt = getopt (argc, argv, "n:s:d:DUPh")) != -1) {
         switch (opt) {
@@ -773,7 +773,7 @@ main (int argc, char *argv[]) {
             use_uring = true;
             break;
         case 'P':
-            use_pwrite = true;
+            use_posix_sync = true;
             break;
         case 'h':
         default:
@@ -809,7 +809,7 @@ main (int argc, char *argv[]) {
         std::filesystem::absolute (test_files_dir_path_obj).string();
 
     int ret = read_write_test (
-        num_transfers, transfer_size, test_files_dir_path_abs_path, use_direct_io, use_uring, use_pwrite);
+        num_transfers, transfer_size, test_files_dir_path_abs_path, use_direct_io, use_uring, use_posix_sync);
 
     if (ret != 0) {
         std::cerr << "Read/Write Test failed" << std::endl;
@@ -819,7 +819,7 @@ main (int argc, char *argv[]) {
     // Reset phase number for repost test
     phase_num = 1;
 
-    ret = test_posix_repost (test_files_dir_path_abs_path, use_uring, use_pwrite);
+    ret = test_posix_repost (test_files_dir_path_abs_path, use_uring, use_posix_sync);
     if (ret != 0) {
         std::cerr << "Repost Test failed" << std::endl;
         return 1;

@@ -138,8 +138,8 @@ static size_t getThreadCount(const nixl_b_params_t *custom_params) {
             }
 
             // Check if pwrite/pread taskflow dispatch is explicitly requested
-            if (custom_params->count("use_pwrite") > 0) {
-                const auto &value = custom_params->at("use_pwrite");
+            if (custom_params->count("use_posix_sync") > 0) {
+                const auto &value = custom_params->at("use_posix_sync");
                 if (value == "true" || value == "1") {
                     return queue_t::PWRITE;
                 }
@@ -319,7 +319,7 @@ nixl_status_t nixlPosixEngine::prepXfer(const nixl_xfer_op_t &operation,
                 params["use_posix_aio"] = "true";
                 break;
             case nixlPosixQueue::queue_t::PWRITE:
-                params["use_pwrite"] = "true";
+                params["use_posix_sync"] = "true";
                 break;
             default:
                 NIXL_ERROR << absl::StrFormat("Invalid queue type: %s", to_string(queue_type_));
