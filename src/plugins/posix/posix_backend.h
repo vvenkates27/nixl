@@ -24,7 +24,7 @@
 #include <absl/strings/str_format.h>
 #include "backend/backend_engine.h"
 #include "posix_queue.h"
-#include "taskflow/core/executor.hpp"
+#include "taskflow/taskflow.hpp"
 
 class nixlPosixBackendReqH : public nixlBackendReqH {
 private:
