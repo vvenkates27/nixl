@@ -53,6 +53,31 @@ nixlEngineDeleter::operator()(nixlBackendEngine *engine) const noexcept {
     // TODO: Else delete engine?
 }
 
+std::string
+nixlEnumStrings::statusStr(const nixl_status_t &status) {
+    switch (status) {
+        case NIXL_IN_PROG:               return "NIXL_IN_PROG";
+        case NIXL_SUCCESS:               return "NIXL_SUCCESS";
+        case NIXL_ERR_NOT_POSTED:        return "NIXL_ERR_NOT_POSTED";
+        case NIXL_ERR_INVALID_PARAM:     return "NIXL_ERR_INVALID_PARAM";
+        case NIXL_ERR_BACKEND:           return "NIXL_ERR_BACKEND";
+        case NIXL_ERR_NOT_FOUND:         return "NIXL_ERR_NOT_FOUND";
+        case NIXL_ERR_MISMATCH:          return "NIXL_ERR_MISMATCH";
+        case NIXL_ERR_NOT_ALLOWED:       return "NIXL_ERR_NOT_ALLOWED";
+        case NIXL_ERR_REPOST_ACTIVE:     return "NIXL_ERR_REPOST_ACTIVE";
+        case NIXL_ERR_UNKNOWN:           return "NIXL_ERR_UNKNOWN";
+        case NIXL_ERR_NOT_SUPPORTED:     return "NIXL_ERR_NOT_SUPPORTED";
+        case NIXL_ERR_REMOTE_DISCONNECT: return "NIXL_ERR_REMOTE_DISCONNECT";
+        case NIXL_ERR_CANCELED:
+            return "NIXL_ERR_CANCELED";
+        case NIXL_ERR_NO_TELEMETRY:
+            return "NIXL_ERR_NO_TELEMETRY";
+        case NIXL_IN_PROG_WITH_ERR:
+            return "NIXL_IN_PROG_WITH_ERR";
+        default:                         return "BAD_STATUS";
+    }
+}
+
 nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_xfer_op_t backend_op,
                            const nixl_mem_t local_type,
@@ -810,6 +835,8 @@ nixlAgent::makeXferReq (const nixl_xfer_op_t &operation,
     handle->engine = backend;
     handle->notifMsg = opt_args.notifMsg;
     handle->hasNotif = opt_args.hasNotif;
+    handle->trackFlags = extra_params ? extra_params->trackFlags : 0;
+    opt_args.trackFlags = handle->trackFlags;
 
     if (data->telemetryEnabled) {
         handle->telemetry.totalBytes = total_bytes;
@@ -945,6 +972,9 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
 
     handle->notifMsg = opt_args.notifMsg;
     handle->hasNotif = opt_args.hasNotif;
+    handle->trackFlags = extra_params ? extra_params->trackFlags : 0;
+
+    opt_args.trackFlags = handle->trackFlags;
 
     if (data->telemetryEnabled) {
         handle->telemetry.totalBytes = total_bytes;
@@ -1155,6 +1185,55 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
 
     // If the status is error when entering this method, it was already logged
     return req_hndl->status;
+}
+
+nixl_status_t
+nixlAgent::getXferStatus(nixlXferReqH *req_hndl, nixl_xfer_entry_events_t &events_out) const {
+
+    if (req_hndl->trackFlags == 0) {
+        NIXL_ERROR_FUNC << "getXferStatus(req, events) requires xfer created with trackFlags != 0";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+
+    // Skip remote-validity check when the request is already complete or errored:
+    // completed requests carry a cached result and don't need metadata anymore.
+    if (req_hndl->status == NIXL_IN_PROG &&
+        data->remoteSections_.count(req_hndl->remoteAgent) == 0) {
+        NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
+                        << "' was invalidated during transfer";
+        return NIXL_ERR_NOT_FOUND;
+    }
+
+    const nixl_status_t status = req_hndl->engine->checkXferEvents(req_hndl->backendHandle, events_out);
+
+    switch (status) {
+        case NIXL_ERR_NOT_SUPPORTED:
+            return status;
+        case NIXL_ERR_REMOTE_DISCONNECT:
+            data->invalidateRemoteData(req_hndl->remoteAgent);
+            req_hndl->status = NIXL_ERR_REMOTE_DISCONNECT;
+            return NIXL_ERR_REMOTE_DISCONNECT;
+        case NIXL_IN_PROG:
+            req_hndl->status = NIXL_IN_PROG;
+            // Only signal in-progress-with-errors when at least one entry has actually errored.
+            for (const auto &ev : events_out) {
+                if (ev.status < 0) return NIXL_IN_PROG_WITH_ERR;
+            }
+            return NIXL_IN_PROG;
+        default:
+            break;
+    }
+
+    req_hndl->status = status;
+    if (data->telemetryEnabled) {
+        if (status == NIXL_SUCCESS)
+            req_hndl->updateRequestStats(data->telemetry_.get(), NIXL_TELEMETRY_FINISH);
+        else if (status < 0)
+            data->addErrorTelemetry(status);
+    }
+    return status;
 }
 
 nixl_status_t

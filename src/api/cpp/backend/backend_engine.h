@@ -149,6 +149,15 @@ class nixlBackendEngine {
         // Use a handle to progress backend engine and see if a transfer is completed or not
         virtual nixl_status_t checkXfer(nixlBackendReqH* handle) const = 0;
 
+        /**
+         * Optional: append new (index, status) events and return overall status.
+         * Default returns NIXL_ERR_NOT_SUPPORTED. Track mode is stored in handle from prep/post.
+         */
+        virtual nixl_status_t
+        checkXferEvents(nixlBackendReqH *, nixl_xfer_entry_events_t &) const {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+
         //Backend aborts the transfer if necessary, and destructs the relevant objects
         virtual nixl_status_t releaseReqH(nixlBackendReqH* handle) const = 0;
 

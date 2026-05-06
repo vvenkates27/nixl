@@ -30,6 +30,37 @@ namespace py = pybind11;
 
 typedef std::map<std::string, std::vector<py::bytes>> nixl_py_notifs_t;
 
+/**
+ * Wrapper to hold nixl_xfer_entry_events_t for reuse across getXferStatus polling loops.
+ * Create once, pass to getXferStatus each poll to avoid per-call allocation.
+ */
+class nixlXferEntryEvents {
+public:
+    nixl_xfer_entry_events_t &
+    events() {
+        return data_;
+    }
+
+    const nixl_xfer_entry_events_t &
+    events() const {
+        return data_;
+    }
+
+    size_t
+    size() const {
+        return data_.size();
+    }
+
+    const nixl_xfer_entry_event_t &
+    get(size_t i) const {
+        if (i >= data_.size()) throw std::out_of_range("index out of range");
+        return data_[i];
+    }
+
+private:
+    nixl_xfer_entry_events_t data_;
+};
+
 class nixlNotPostedError : public std::runtime_error {
 public:
     nixlNotPostedError(const char *what) : runtime_error(what) {}
@@ -94,7 +125,8 @@ void
 throw_nixl_exception(const nixl_status_t &status) {
     switch (status) {
     case NIXL_IN_PROG:
-        return; // not an error
+    case NIXL_IN_PROG_WITH_ERR:
+        return; // not an error (in progress)
     case NIXL_SUCCESS:
         return; // not an error
     case NIXL_ERR_NOT_POSTED:
@@ -185,7 +217,15 @@ PYBIND11_MODULE(_bindings, m) {
         .value("NIXL_ERR_REPOST_ACTIVE", NIXL_ERR_REPOST_ACTIVE)
         .value("NIXL_ERR_UNKNOWN", NIXL_ERR_UNKNOWN)
         .value("NIXL_ERR_NOT_SUPPORTED", NIXL_ERR_NOT_SUPPORTED)
+        .value("NIXL_ERR_REMOTE_DISCONNECT", NIXL_ERR_REMOTE_DISCONNECT)
+        .value("NIXL_ERR_CANCELED", NIXL_ERR_CANCELED)
+        .value("NIXL_ERR_NO_TELEMETRY", NIXL_ERR_NO_TELEMETRY)
+        .value("NIXL_IN_PROG_WITH_ERR", NIXL_IN_PROG_WITH_ERR)
         .export_values();
+
+    m.attr("NIXL_XFER_TRACK_ERRORS") = py::int_(static_cast<uint32_t>(NIXL_XFER_TRACK_ERRORS));
+    m.attr("NIXL_XFER_TRACK_SUCCESSES") =
+        py::int_(static_cast<uint32_t>(NIXL_XFER_TRACK_SUCCESSES));
 
     py::class_<nixl_xfer_telem_t>(m, "nixlXferTelemetry")
         .def(py::init<>())
@@ -202,6 +242,36 @@ PYBIND11_MODULE(_bindings, m) {
         .def_readonly("totalBytes", &nixl_xfer_telem_t::totalBytes)
         .def_readonly("descCount", &nixl_xfer_telem_t::descCount);
 
+    py::class_<nixlXferEntryEvents>(
+        m,
+        "nixlXferEntryEvents",
+        "Reusable container for per-entry transfer events. "
+        "Create once, pass to getXferStatus each poll to avoid allocation.")
+        .def(py::init<>())
+        .def("__len__", &nixlXferEntryEvents::size)
+        .def("__getitem__",
+             [](const nixlXferEntryEvents &v, size_t i) {
+                 if (i >= v.size()) throw py::index_error("index out of range");
+                 const auto &e = v.get(i);
+                 return py::make_tuple(e.index, static_cast<int>(e.status));
+             })
+        .def(
+            "__iter__",
+            [](const nixlXferEntryEvents &v) -> py::iterator {
+                py::list result;
+                for (const auto &e : v.events())
+                    result.append(py::make_tuple(e.index, static_cast<int>(e.status)));
+                return py::iter(result);
+            })
+        .def(
+            "to_list",
+            [](const nixlXferEntryEvents &v) {
+                py::list result;
+                for (const auto &e : v.events())
+                    result.append(py::make_tuple(e.index, static_cast<int>(e.status)));
+                return result;
+            },
+            "Convert to a Python list of (index, status) tuples");
 
     py::register_exception<nixlNotPostedError>(m, "nixlNotPostedError");
     py::register_exception<nixlInvalidParamError>(m, "nixlInvalidParamError");
@@ -592,7 +662,8 @@ PYBIND11_MODULE(_bindings, m) {
                py::object remote_indices,
                const std::string &notif_msg,
                const std::vector<uintptr_t> &backends,
-               bool skip_desc_merge) -> uintptr_t {
+               bool skip_desc_merge,
+               uint32_t track_flags) -> uintptr_t {
                 nixlXferReqH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
@@ -603,6 +674,7 @@ PYBIND11_MODULE(_bindings, m) {
                     extra_params.notif = notif_msg;
                 }
                 extra_params.skipDescMerge = skip_desc_merge;
+                extra_params.trackFlags = track_flags;
                 std::vector<int> local_indices_vec;
                 std::vector<int> remote_indices_vec;
 
@@ -649,7 +721,8 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("remote_indices"),
             py::arg("notif_msg") = std::string(""),
             py::arg("backend") = std::vector<uintptr_t>({}),
-            py::arg("skip_desc_merg") = false)
+            py::arg("skip_desc_merge") = false,
+            py::arg("track_flags") = 0)
         .def(
             "createXferReq",
             [](nixlAgent &agent,
@@ -658,7 +731,8 @@ PYBIND11_MODULE(_bindings, m) {
                const nixl_xfer_dlist_t &remote_descs,
                const std::string &remote_agent,
                const std::string &notif_msg,
-               const std::vector<uintptr_t> &backends) -> uintptr_t {
+               const std::vector<uintptr_t> &backends,
+               uint32_t track_flags) -> uintptr_t {
                 nixlXferReqH *handle = nullptr;
                 nixl_opt_args_t extra_params;
 
@@ -668,6 +742,7 @@ PYBIND11_MODULE(_bindings, m) {
                 if (notif_msg.size() > 0) {
                     extra_params.notif = notif_msg;
                 }
+                extra_params.trackFlags = track_flags;
                 nixl_status_t ret = agent.createXferReq(
                     operation, local_descs, remote_descs, remote_agent, handle, &extra_params);
 
@@ -680,6 +755,7 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("remote_agent"),
             py::arg("notif_msg") = std::string(""),
             py::arg("backend") = std::vector<uintptr_t>({}),
+            py::arg("track_flags") = 0,
             py::call_guard<py::gil_scoped_release>())
         .def(
             "estimateXferCost",
@@ -713,11 +789,37 @@ PYBIND11_MODULE(_bindings, m) {
         .def(
             "getXferStatus",
             [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
-                nixl_status_t ret = agent.getXferStatus((nixlXferReqH *)reqh);
+                nixl_status_t ret;
+                {
+                    py::gil_scoped_release release;
+                    ret = agent.getXferStatus((nixlXferReqH *)reqh);
+                }
                 throw_nixl_exception(ret);
                 return ret;
             },
-            py::call_guard<py::gil_scoped_release>())
+            py::arg("reqh"),
+            R"pbdoc(
+                Get aggregate transfer status. Raises an exception on error.
+                Returns NIXL_SUCCESS when complete or NIXL_IN_PROG while running.
+            )pbdoc")
+        .def(
+            "getXferStatus",
+            [](nixlAgent &agent, uintptr_t reqh, nixlXferEntryEvents &events) -> nixl_status_t {
+                // GIL must be held: C++ appends to events.data_ which Python may concurrently read.
+                return agent.getXferStatus((nixlXferReqH *)reqh, events.events());
+            },
+            py::arg("reqh"),
+            py::arg("events"),
+            R"pbdoc(
+                Get transfer status with per-entry events. Never throws — always returns
+                a nixl_status_t so the caller can inspect per-entry (index, status) pairs
+                even when the overall status indicates partial failure.
+                NIXL_SUCCESS: complete, no errors.
+                NIXL_IN_PROG: still running, no errors observed yet; poll again.
+                NIXL_IN_PROG_WITH_ERR: still running, but at least one entry has errored; poll again.
+                Other negative value: transfer finished with errors; inspect events.
+                Requires trackFlags != 0.
+            )pbdoc")
         .def(
             "getXferTelemetry",
             [](nixlAgent &agent, uintptr_t reqh) -> nixl_xfer_telem_t {
